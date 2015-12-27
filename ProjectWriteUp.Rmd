@@ -1,0 +1,367 @@
+---
+title: "Practical Machine Learning Project"
+author: "Dhrumil Dalal"
+date: "December 27, 2015"
+output: html_document
+---
+
+
+Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement ??? a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+
+Goal
+
+The goal of your project is to predict the manner in which they did the exercise. This is the “classe” variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+The information is available from the website here: http://groupware.les.inf.puc-rio.br/har
+
+
+**Step 0 - Define Problem statement**
+
+As indicated in the intorduction, the goal of the project is to determine the quality of the exercise. The quality of the exercise is determined by the variable "classe".
+
+**Step 1 - Obtain Data**
+
+The training and test data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The original source of the data is: http://groupware.les.inf.puc-rio.br/har.
+ 
+```{r, eval=FALSE}
+#######################################################################################################
+## This function is responsible for 
+## 1. Downloading the file from the source URL
+## 2. If the data folder does not exist then create it
+## 3. Copy the files to the this folder
+getDataFiles <- function(filesDirectory) 
+{ 
+  setwd(".")
+  if (!file.exists(filesDirectory)) 
+  {
+    dir.create(filesDirectory)
+    
+    ModelTestDataUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-ModelTestDataing.csv"
+    ModelDevDataUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-ModelDevDataing.csv"
+    ModelDevDataFile <- "ModelDevData.csv"
+    ModelTestDataFile <- "ModelTestData.csv"
+    ModelDevDataFilePath <- paste(filesDirectory, ModelDevDataFile, sep = "/")
+    ModelTestDataFilePath <- paste(filesDirectory, ModelTestDataFile, sep = "/")
+    download.file(ModelDevDataUrl, destfile = ModelDevDataFilePath)
+    download.file(ModelTestDataUrl, destfile = ModelTestDataFilePath)
+    ModelDevDataing <- read.csv(ModelDevDataFilePath, na.strings=c("NA","#DIV/0!",""))
+    ModelTestDataing <- read.csv(ModelTestDataFilePath, na.strings=c("NA","#DIV/0!",""))
+  }
+}
+#######################################################################################################
+``` 
+
+```{r, echo=FALSE}
+library(caret)
+library(rpart)
+library(RColorBrewer)
+library(randomForest)
+#######################################################################################################
+## This function is responsible for 
+## 1. Downloading the file from the source URL
+## 2. If the data folder does not exist then create it
+## 3. Copy the files to the this folder
+getDataFiles <- function(filesDirectory) 
+{ 
+  setwd(".")
+  if (!file.exists(filesDirectory)) 
+  {
+    dir.create(filesDirectory)
+    
+    ModelTestDataUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-ModelTestDataing.csv"
+    ModelDevDataUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-ModelDevDataing.csv"
+    ModelDevDataFile <- "ModelDevData.csv"
+    ModelTestDataFile <- "ModelTestData.csv"
+    ModelDevDataFilePath <- paste(filesDirectory, ModelDevDataFile, sep = "/")
+    ModelTestDataFilePath <- paste(filesDirectory, ModelTestDataFile, sep = "/")
+    download.file(ModelDevDataUrl, destfile = ModelDevDataFilePath)
+    download.file(ModelTestDataUrl, destfile = ModelTestDataFilePath)
+    ModelDevDataing <- read.csv(ModelDevDataFilePath, na.strings=c("NA","#DIV/0!",""))
+    ModelTestDataing <- read.csv(ModelTestDataFilePath, na.strings=c("NA","#DIV/0!",""))
+  }
+}
+#######################################################################################################
+``` 
+
+
+**Step 2 - Basic EDA**
+
+Once the problem is defined and we have the dataset with us, the next step is to explore the data. In a real world
+scenario comprehensive and extensive EDA needs to be done, for the purpose of this project we will be undertaking only
+the baisc EDA. We examine various columns using the summary() function.  
+
+```{r, eval=FALSE}
+getDataFiles("./data")
+
+training <- read.csv("./data/train.csv")
+testing <- read.csv("./data/test.csv")
+summary(training)
+head(training)
+```
+
+
+```{r, echo==FALSE}
+getDataFiles("./data")
+
+training <- read.csv("./data/train.csv")
+testing <- read.csv("./data/test.csv")
+```
+
+We observe following
+
+1. There are total of 155 columns in the dataset. 
+
+2. First 5 columns in the dataset downloaded are not useful for analysis purpose as they contain user information and audit columns.
+
+3. There are columns in the dataset where more than 50% rows have the values of NULL or NA.
+
+
+
+**Step 3 - Training Data Preparation**
+
+We remove these columns from the training dataset. We also remove the columns from the testing dataset.
+```{r,eval=FALSE}
+
+## Remove first 5 colums from the training set
+dimTr <- dim(training); 
+training <- training[,6:dimTr[2]]
+dimTr <- dim(training); 
+
+## Remove first 5 colums from the testing set
+dimTest <- dim(testing); 
+testing <- testing[,6:dimTest[2]]
+dimTest <- dim(testing); 
+
+```
+
+```{r,echo=FALSE}
+
+## Remove first 5 colums from the training set
+dimTr <- dim(training); 
+training <- training[,6:dimTr[2]]
+dimTr <- dim(training); 
+
+## Remove first 5 colums from the testing set
+dimTest <- dim(testing); 
+testing <- testing[,6:dimTest[2]]
+dimTest <- dim(testing); 
+
+```
+
+**Step 4 - Feature Selection**
+
+Next we determine the that columns have impact on the output columns. We do this by using NearZeroValue 
+function. Then we perform similar operation on the testing set.
+
+```{r eval=FALSE}
+
+uselessCol <- nearZeroVar(training, saveMetrics=TRUE)$nzv
+for ( i in 1:dimTr[2]  )
+{
+  if (sum(is.na(training[,i]))/dimTr[1] > 0.8)
+  {
+    uselessCol[i] <- TRUE
+   
+  }
+  
+}
+training <- training[, uselessCol==FALSE]
+testing <- testing [, uselessCol==FALSE]
+
+```
+
+
+```{r echo=FALSE}
+
+uselessCol <- nearZeroVar(training, saveMetrics=TRUE)$nzv
+for ( i in 1:dimTr[2]  )
+{
+  if (sum(is.na(training[,i]))/dimTr[1] > 0.8)
+  {
+    uselessCol[i] <- TRUE
+   
+  }
+  
+}
+training <- training[, uselessCol==FALSE]
+testing <- testing [, uselessCol==FALSE]
+
+```
+At this poin we are left with the columns that have significant impact on the output variable. The list of the input variables can be seen using the head() function
+
+
+```{r, eval=FALSE}
+head(training)
+```
+
+
+```{r, echo=FALSE}
+head(training)
+```
+Now we prepare the final set that will be used for training the model and perform In-Sample testing of the model. The training set 
+is split in 2 parts; dataset used to train the model and dataset to perform In-Sample testing. We use 
+
+60% of the data for training the model and 
+
+40% of data for In-Sample testing 
+
+
+In order to make the results reproducible we set the seed to 786
+```{r, eval=FALSE}
+set.seed(786)
+inTrain <- createDataPartition(y=training$classe, p=0.6, list=FALSE)
+myTraining <- training[inTrain, ] 
+myTesting <- training[-inTrain, ]
+
+```
+
+```{r, echo=FALSE}
+set.seed(786)
+inTrain <- createDataPartition(y=training$classe, p=0.6, list=FALSE)
+myTraining <- training[inTrain, ] 
+myTesting <- training[-inTrain, ]
+
+```
+
+**Step 5 - Model Selection**
+
+Model selection consists of several steps. In this process we need to try out various algorithms. As we select an algorithm we also
+ensure there is no over-fitting in the model.
+
+
+***Step 5a - Avoid Overfitting***
+
+We prepare a control-set, where we specify the method to be used as 10 fold cross validation. We also specify that we want to use
+PCA (Principal Component Analysis) as pre-processing option.
+
+```{r,eval=FALSE}
+tc <- trainControl(method = "cv", number = 10, verboseIter=FALSE , preProcOptions="pca", allowParallel=TRUE)
+```
+
+
+```{r,echo=FALSE}
+tc <- trainControl(method = "cv", number = 10, verboseIter=FALSE , preProcOptions="pca", allowParallel=TRUE)
+```
+
+
+
+***Step 5b - Model Training***
+
+Random Forest and Recursive Partitioning algorithms are used to train model.  We observe that 
+
+1. For Random Forest algorithm even with 60% data used for training and 10 folds for Cross validation; the accuracy is fairly consistent acorss all 10 folds.
+
+2. For Recursive Partitioning the accuracy is failry consistent acorss all 10 folds.
+
+3. The accuracy of Random forest is very high 99.68%
+
+4. The accuracy of Recursive Partitioning is very poor 53.17%
+
+```{r,eval=FALSE}
+rf <- train(classe ~ ., data = myTraining, method = "rf", trControl= tc)
+rf$resample
+rf$results
+
+
+rpart <- train(classe ~ ., data = myTraining, method = "rpart", trControl= tc)
+rpart$resample
+rpart$results
+
+```
+
+```{r,echo=FALSE}
+rf <- train(classe ~ ., data = myTraining, method = "rf", trControl= tc)
+print("The cross validation result using Random Forest is ")
+rf$resample
+rf$results
+
+
+
+print("The cross validation result using Recursive Partitioning is ")
+rpart <- train(classe ~ ., data = myTraining, method = "rpart", trControl= tc)
+rpart$resample
+rpart$results
+
+```
+
+***Step 5c - Model Validation (In Sample Testing)***
+
+Next we perform in-Data set testing. Again we observe that
+
+1. For Random Forest the accuracy for In-Sample testing (99.58%) is fairly consistent with each folds in the cross validation (99.68%).  
+
+2. For Recurssive Partitioning there is slight drop in the accuracy of In-Sample testing (49.24%) from average accuracy in cross validation (53.17%) 
+
+```{r,eval=FALSE}
+confusionMatrix(predict(rf,myTesting),myTesting$classe)
+
+confusionMatrix(predict(rpart,myTesting),myTesting$classe)
+```
+
+
+```{r,echo=FALSE}
+print("The Accuracy for In-Sample testing using Random Forset is ")
+confusionMatrix(predict(rf,myTesting),myTesting$classe)$overall[1]
+
+
+print("The Accuracy for In-Sample testing using Reccursive Partition is ")
+confusionMatrix(predict(rpart,myTesting),myTesting$classe)$overall[1]
+
+print("The confusion matrix for In-Sample testing using Random Forest is ")
+confusionMatrix(predict(rf,myTesting),myTesting$classe)[2]
+
+
+print("The confusion matrix for In-Sample testing using Reccursive Partition is ")
+confusionMatrix(predict(rpart,myTesting),myTesting$classe)[2]
+
+
+```
+
+The error in the predicting function is 1 - Accuracy. 
+
+That will be 
+
+1 - 0.995 = 0.005 (Random Forest)
+1 - 0.492 = 0.508 (Recursive Trees)
+
+**Step 6 - Model Validation (Out Of Sample Testing)**
+
+Next we perform Out Of Sample testing. 
+
+```{r,eval=FALSE}
+
+RFPrediction <- predict(rf,testing)
+print("Prediction with Random Forest")
+RFPrediction
+
+
+RPartPrediction <- predict(rpart,testing)
+print("Prediction with Recurcive Partitioning")
+RPartPrediction
+```
+
+```{r,echo=FALSE}
+
+RFPrediction <- predict(rf,testing)
+print("Prediction with Random Forest")
+RFPrediction
+
+
+RPartPrediction <- predict(rpart,testing)
+print("Prediction with Recurcive Partitioning")
+RPartPrediction
+```
+
+**Step 6 - Conclusion**
+For the given data set Random Forest performs better than Recursive Partitioning. We will be using the RFPrediction model for next part of the submission
+
+
